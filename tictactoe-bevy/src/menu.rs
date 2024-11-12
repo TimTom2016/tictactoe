@@ -5,8 +5,9 @@ use bevy::{
     },
     prelude::*,
 };
+use tictactoe_logic::grid::Grid;
 
-use crate::{despawn_screen, AppState};
+use crate::{despawn_screen, AppState, GameData, PlayerChoice};
 pub struct MenuPlugin;
 
 #[derive(States, Default, Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
@@ -172,19 +173,31 @@ fn menu_action(
         (Changed<Interaction>, With<Button>),
     >,
     mut app_state: ResMut<NextState<AppState>>,
+    mut menu_state: ResMut<NextState<MenuState>>,
     mut exit: EventWriter<bevy::app::AppExit>,
+    mut commands: Commands,
 ) {
     for (interaction, menu_button_action) in &interaction_query {
         if *interaction == Interaction::Pressed {
             match menu_button_action {
                 MenuButtonAction::PlayX => {
-                    // Handle playing as X
-                    println!("Playing as X");
+                    info!("Playing as X");
+                    commands.insert_resource(GameData {
+                        player: PlayerChoice::X,
+                        grid: Grid::new(3, 3),
+                        moves: 0,
+                    });
+                    menu_state.set(MenuState::InTransition);
                     app_state.set(AppState::InGame);
                 }
                 MenuButtonAction::PlayO => {
-                    // Handle playing as O
-                    println!("Playing as O");
+                    info!("Playing as O");
+                    commands.insert_resource(GameData {
+                        player: PlayerChoice::O,
+                        grid: Grid::new(3, 3),
+                        moves: 0,
+                    });
+                    menu_state.set(MenuState::InTransition);
                     app_state.set(AppState::InGame);
                 }
                 MenuButtonAction::Exit => {

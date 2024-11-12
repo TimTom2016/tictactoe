@@ -8,12 +8,19 @@ use bevy::{
     utils::{HashMap, HashSet},
 };
 use menu::MenuPlugin;
+use tictactoe_logic::{
+    grid::{FieldStates, Grid},
+    minimax::MiniMax,
+};
 mod menu;
 #[derive(Event)]
 struct Click(pub Vec2, pub f32);
 
 #[derive(Event)]
 struct Pressed;
+
+#[derive(Event)]
+struct KIMove;
 
 #[derive(Component)]
 struct Tile {
@@ -27,6 +34,104 @@ pub enum AppState {
     InMenu,
     InGame,
 }
+#[derive(Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
+pub enum PlayerChoice {
+    X,
+    O,
+}
+
+pub enum MoveResult {
+    Won(u32),
+    Moved(u32),
+}
+
+impl PlayerChoice {
+    pub fn opposite(&self) -> Self {
+        match self {
+            PlayerChoice::X => PlayerChoice::O,
+            PlayerChoice::O => PlayerChoice::X,
+        }
+    }
+    pub fn to_field_states(&self) -> FieldStates {
+        match self {
+            PlayerChoice::X => FieldStates::Player1,
+            PlayerChoice::O => FieldStates::Player2,
+        }
+    }
+}
+#[derive(Resource)]
+pub struct GameData {
+    pub player: PlayerChoice,
+    pub grid: Grid,
+    pub moves: u32,
+}
+
+impl GameData {
+    pub fn make_move(&mut self, grid_index: u32) -> Result<MoveResult, ()> {
+        let moves = self.who_moves();
+        if moves != self.player {
+            return Err(());
+        }
+        let current_state = moves.to_field_states();
+
+        // Try to make the move
+        if self
+            .grid
+            .set_elem(grid_index as usize, current_state)
+            .is_some()
+        {
+            self.moves += 1;
+
+            // Check if the current move resulted in a win
+            if self.grid.check_win(current_state) {
+                Ok(MoveResult::Won(grid_index))
+            } else {
+                Ok(MoveResult::Moved(grid_index))
+            }
+        } else {
+            Err(())
+        }
+    }
+
+    pub fn who_moves(&self) -> PlayerChoice {
+        // If moves is even, X moves; if odd, O moves
+        if self.moves % 2 == 0 {
+            PlayerChoice::X
+        } else {
+            PlayerChoice::O
+        }
+    }
+    pub fn make_ki_move(&mut self) -> Result<MoveResult, ()> {
+        let mut minimax = MiniMax::new(&self.grid);
+        let new_grid = self.grid.clone();
+        self.grid = minimax.calculate();
+        self.moves += 1;
+        let mut changed_index = 0;
+        for (index, (old, new)) in self
+            .grid
+            .clone()
+            .into_iter()
+            .zip(new_grid.into_iter())
+            .enumerate()
+        {
+            if old != new {
+                // Found the move, now make it through the regular move system
+                changed_index = index as u32;
+            }
+        }
+        // Check if KI won
+        if self.grid.check_win(FieldStates::Player2) {
+            Ok(MoveResult::Won(changed_index))
+        } else {
+            Ok(MoveResult::Moved(changed_index))
+        }
+    }
+}
+
+#[derive(Component)]
+struct Symbol {
+    is_x: bool,
+}
 
 #[derive(Component)]
 struct OnGameScreen;
@@ -38,6 +143,13 @@ fn main() {
         .add_systems(Startup, setup)
         .add_systems(OnEnter(AppState::InGame), setup_game)
         .add_systems(Update, handle_click.run_if(in_state(AppState::InGame)))
+        .add_event::<Click>()
+        .add_event::<Pressed>()
+        .add_event::<KIMove>()
+        .add_systems(
+            Update,
+            (handle_ki_move).chain().run_if(in_state(AppState::InGame)),
+        )
         .init_resource::<SpatialIndex>()
         .init_state::<AppState>()
         .observe(
@@ -73,13 +185,23 @@ fn setup_game(
     mut materials: ResMut<Assets<ColorMaterial>>,
 ) {
     let mut observer = Observer::new(tile_pressed);
-    for y in 0..3 {
-        for x in 0..3 {
+    let cols = 3;
+    let rows = 3;
+    let offset = Vec2::new(
+        rows as f32 * 64.0 - 64.0, // Total width / 2
+        cols as f32 * 64.0 - 64.0, // Total height / 2
+    );
+    for y in 0..cols {
+        for x in 0..rows {
             commands.spawn((MaterialMesh2dBundle {
                 mesh: meshes.add(Rectangle::default()).into(),
                 transform: Transform::default()
                     .with_scale(Vec3::splat(128.))
-                    .with_translation(Vec3::new(x as f32 * 128.0, y as f32 * 128.0, 0.0)),
+                    .with_translation(Vec3::new(
+                        x as f32 * 128.0 - offset.x,
+                        y as f32 * 128.0 - offset.y,
+                        0.0,
+                    )),
                 material: materials.add(Color::from(WHITE)),
                 ..default()
             },));
@@ -91,8 +213,8 @@ fn setup_game(
                             transform: Transform::default()
                                 .with_scale(Vec3::splat(120.))
                                 .with_translation(Vec3::new(
-                                    x as f32 * 128.0,
-                                    y as f32 * 128.0,
+                                    x as f32 * 128.0 - offset.x,
+                                    y as f32 * 128.0 - offset.y,
                                     0.1,
                                 )),
                             material: materials.add(Color::srgb_u8(43, 44, 47)),
@@ -159,13 +281,50 @@ fn on_remove_tile(
     });
 }
 
-fn tile_pressed(trigger: Trigger<Pressed>, query: Query<&Tile>, mut commands: Commands) {
-    // If a triggered event is targeting a specific entity you can access it with `.entity()`
+fn tile_pressed(
+    trigger: Trigger<Pressed>,
+    query: Query<&Tile>,
+    mut game_data: ResMut<GameData>,
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<ColorMaterial>>,
+) {
     let id = trigger.entity();
-    let Some(mut entity) = commands.get_entity(id) else {
+    let Some(entity) = commands.get_entity(id) else {
         return;
     };
-    info!("Boom! {:?} exploded.", query.get(id).unwrap().index);
+    info!("");
+
+    let tile = query.get(id).unwrap();
+    if let Ok(result) = game_data.make_move(tile.index) {
+        match result {
+            MoveResult::Moved(index) => {
+                spawn_symbol(
+                    &mut commands,
+                    &mut meshes,
+                    &mut materials,
+                    tile.pos,
+                    game_data.player.clone(),
+                );
+                info!("moved");
+                // Trigger KI move if it's not game over
+                commands.add(move |world: &mut World| {
+                    world.send_event(KIMove);
+                });
+            }
+            MoveResult::Won(index) => {
+                spawn_symbol(
+                    &mut commands,
+                    &mut meshes,
+                    &mut materials,
+                    tile.pos,
+                    game_data.player.clone(),
+                );
+                // Handle win condition
+                info!("Player won!");
+            }
+        }
+    }
 }
 
 #[derive(Resource, Default)]
@@ -199,4 +358,114 @@ pub fn despawn_screen<T: Component>(to_despawn: Query<Entity, With<T>>, mut comm
     for entity in &to_despawn {
         commands.entity(entity).despawn_recursive();
     }
+}
+
+fn handle_ki_move(
+    mut game_data: ResMut<GameData>,
+    query: Query<&Tile>,
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<ColorMaterial>>,
+    mut ki_move_events: EventReader<KIMove>,
+) {
+    for _ in ki_move_events.read() {
+        if let Ok(result) = game_data.make_ki_move() {
+            match result {
+                MoveResult::Moved(index) => {
+                    if let Some(tile) = query.iter().find(|t| t.index == index) {
+                        spawn_symbol(
+                            &mut commands,
+                            &mut meshes,
+                            &mut materials,
+                            tile.pos,
+                            game_data.player.opposite(),
+                        );
+                    }
+                }
+                MoveResult::Won(index) => {
+                    if let Some(tile) = query.iter().find(|t| t.index == index) {
+                        spawn_symbol(
+                            &mut commands,
+                            &mut meshes,
+                            &mut materials,
+                            tile.pos,
+                            game_data.player.opposite(),
+                        );
+                    }
+                    info!("KI won!");
+                }
+            }
+        }
+    }
+}
+
+fn spawn_symbol(
+    commands: &mut Commands,
+    meshes: &mut ResMut<Assets<Mesh>>,
+    materials: &mut ResMut<Assets<ColorMaterial>>,
+    position: Vec2,
+    player_choice: PlayerChoice,
+) {
+    match player_choice {
+        PlayerChoice::X => spawn_x(commands, meshes, materials, position),
+        PlayerChoice::O => spawn_o(commands, meshes, materials, position),
+    }
+}
+
+fn spawn_x(
+    commands: &mut Commands,
+    meshes: &mut ResMut<Assets<Mesh>>,
+    materials: &mut ResMut<Assets<ColorMaterial>>,
+    position: Vec2,
+) {
+    let symbol_size = 100.0;
+
+    // Spawn first line of X (diagonal from top-left to bottom-right)
+    commands.spawn((
+        MaterialMesh2dBundle {
+            mesh: meshes.add(Rectangle::default()).into(),
+            transform: Transform::from_xyz(position.x, position.y, 0.2)
+                .with_rotation(Quat::from_rotation_z(45f32.to_radians()))
+                .with_scale(Vec3::new(symbol_size, symbol_size / 8.0, 1.0)),
+            material: materials.add(Color::from(BLACK)),
+            ..default()
+        },
+        Symbol { is_x: true },
+        OnGameScreen,
+    ));
+
+    // Spawn second line of X (diagonal from top-right to bottom-left)
+    commands.spawn((
+        MaterialMesh2dBundle {
+            mesh: meshes.add(Rectangle::default()).into(),
+            transform: Transform::from_xyz(position.x, position.y, 0.2)
+                .with_rotation(Quat::from_rotation_z(-45f32.to_radians()))
+                .with_scale(Vec3::new(symbol_size, symbol_size / 8.0, 1.0)),
+            material: materials.add(Color::from(BLACK)),
+            ..default()
+        },
+        Symbol { is_x: true },
+        OnGameScreen,
+    ));
+}
+
+fn spawn_o(
+    commands: &mut Commands,
+    meshes: &mut ResMut<Assets<Mesh>>,
+    materials: &mut ResMut<Assets<ColorMaterial>>,
+    position: Vec2,
+) {
+    let symbol_size = 100.0;
+
+    commands.spawn((
+        MaterialMesh2dBundle {
+            mesh: meshes.add(Circle::new(symbol_size / 2.0)).into(),
+            transform: Transform::from_xyz(position.x, position.y, 0.2)
+                .with_scale(Vec3::splat(1.0)),
+            material: materials.add(Color::from(GRAY_50)),
+            ..default()
+        },
+        Symbol { is_x: false },
+        OnGameScreen,
+    ));
 }

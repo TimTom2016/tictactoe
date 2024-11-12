@@ -1,6 +1,6 @@
 use crate::grid::{FieldStates, Grid};
 #[derive(Clone)]
-struct MiniMax {
+pub struct MiniMax {
     grid: Grid,
 }
 
