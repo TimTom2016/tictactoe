@@ -1,0 +1,6 @@
+[workspace]
+resolver = "2"
+members = [ "tictactoe-bevy","tictactoe-iced", "tictactoe-logic"]
+
+[workspace.dependencies]
+tictactoe-logic = {path="tictactoe-logic"}
