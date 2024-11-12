@@ -8,21 +8,39 @@ impl MiniMax {
     pub fn new(grid: &Grid) -> Self {
         Self { grid: grid.clone() }
     }
-    pub fn calculate(&mut self) -> Grid {
+    pub fn calculate(&mut self, player: FieldStates) -> Grid {
         let size = self.grid.size();
-        let (best_move, score) =
-            self.minimax((size.1 * size.0) as i8, true, std::i8::MIN, std::i8::MAX);
-        self.grid.set_elem(best_move as usize, FieldStates::Player2);
+        let (best_move, score) = self.minimax(
+            (size.1 * size.0) as i8,
+            true,
+            std::i8::MIN,
+            std::i8::MAX,
+            player,
+        );
+        self.grid.set_elem(best_move as usize, player);
         self.grid.clone()
     }
 
-    fn minimax(&self, depth: i8, maximize_win: bool, mut alpha: i8, mut beta: i8) -> (i8, i8) {
-        if self.grid.check_win(FieldStates::Player2) {
+    fn minimax(
+        &self,
+        depth: i8,
+        maximize_win: bool,
+        mut alpha: i8,
+        mut beta: i8,
+        player: FieldStates,
+    ) -> (i8, i8) {
+        let opponent = match player {
+            FieldStates::Player1 => FieldStates::Player2,
+            FieldStates::Player2 => FieldStates::Player1,
+            _ => panic!("Invalid player state"),
+        };
+        if self.grid.check_win(player) {
             return (-1, 10 + depth); // AI wins
         }
-        if self.grid.check_win(FieldStates::Player1) {
-            return (-1, -10 - depth); // Human wins
+        if self.grid.check_win(opponent) {
+            return (-1, -10 - depth); // Opponent wins
         }
+
         if depth == 0 || self.grid.is_full() {
             return (-1, 0); // Tie or max depth reached
         }
@@ -39,15 +57,10 @@ impl MiniMax {
                 continue;
             }
             let mut next_move = self.clone();
-            next_move.grid.set_elem(
-                i,
-                if maximize_win {
-                    FieldStates::Player2
-                } else {
-                    FieldStates::Player1
-                },
-            );
-            let (_, score) = next_move.minimax(depth - 1, !maximize_win, alpha, beta);
+            next_move
+                .grid
+                .set_elem(i, if maximize_win { player } else { opponent });
+            let (_, score) = next_move.minimax(depth - 1, !maximize_win, alpha, beta, player);
 
             if maximize_win {
                 if score > best_score {
@@ -70,19 +83,25 @@ impl MiniMax {
 
         (best_move, best_score)
     }
-    pub fn calculate_without_pruning(&mut self) -> Grid {
+    pub fn calculate_without_pruning(&mut self, player: FieldStates) -> Grid {
         let size = self.grid.size();
-        let (best_move, score) = self.minimax_simple((size.1 * size.0) as i8, true);
-        self.grid.set_elem(best_move as usize, FieldStates::Player2);
+        let (best_move, score) = self.minimax_simple((size.1 * size.0) as i8, true, player);
+        self.grid.set_elem(best_move as usize, player);
         self.grid.clone()
     }
 
-    fn minimax_simple(&self, depth: i8, maximize_win: bool) -> (i8, i8) {
-        if self.grid.check_win(FieldStates::Player2) {
+    fn minimax_simple(&self, depth: i8, maximize_win: bool, player: FieldStates) -> (i8, i8) {
+        let opponent = match player {
+            FieldStates::Player1 => FieldStates::Player2,
+            FieldStates::Player2 => FieldStates::Player1,
+            _ => panic!("Invalid player state"),
+        };
+
+        if self.grid.check_win(player) {
             return (-1, 10 + depth); // AI wins
         }
-        if self.grid.check_win(FieldStates::Player1) {
-            return (-1, -10 - depth); // Human wins
+        if self.grid.check_win(opponent) {
+            return (-1, -10 - depth); // Opponent wins
         }
         if depth == 0 || self.grid.is_full() {
             return (-1, 0); // Tie or max depth reached
@@ -100,15 +119,10 @@ impl MiniMax {
                 continue;
             }
             let mut next_move = self.clone();
-            next_move.grid.set_elem(
-                i,
-                if maximize_win {
-                    FieldStates::Player2
-                } else {
-                    FieldStates::Player1
-                },
-            );
-            let (_, score) = next_move.minimax_simple(depth - 1, !maximize_win);
+            next_move
+                .grid
+                .set_elem(i, if maximize_win { player } else { opponent });
+            let (_, score) = next_move.minimax_simple(depth - 1, !maximize_win, player);
 
             if maximize_win {
                 if score > best_score {
@@ -141,7 +155,7 @@ mod tests {
         grid.set(0, 2, FieldStates::Player1);
 
         let mut minimax = MiniMax::new(&grid);
-        let result = minimax.calculate();
+        let result = minimax.calculate(FieldStates::Player2);
         assert_eq!(result.get(2, 2), Some(&FieldStates::Player2));
     }
 
@@ -152,7 +166,7 @@ mod tests {
         grid.set(1, 1, FieldStates::Player1);
 
         let mut minimax = MiniMax::new(&grid);
-        let result = minimax.calculate();
+        let result = minimax.calculate(FieldStates::Player2);
 
         assert_eq!(result.get(2, 2), Some(&FieldStates::Player2));
     }
@@ -161,7 +175,7 @@ mod tests {
     fn test_empty_board() {
         let grid = Grid::new(3, 3);
         let mut minimax = MiniMax::new(&grid);
-        let result = minimax.calculate();
+        let result = minimax.calculate(FieldStates::Player2);
 
         // The first move should be in a corner or center for optimal play
         let corner_or_center = vec![(0, 0), (0, 2), (2, 0), (2, 2), (1, 1)];
@@ -181,7 +195,7 @@ mod tests {
         grid.set(1, 0, FieldStates::Player1);
 
         let mut minimax = MiniMax::new(&grid);
-        let result = minimax.calculate();
+        let result = minimax.calculate(FieldStates::Player2);
 
         // Player2 should choose to win rather than block
         assert_eq!(result.get(2, 2), Some(&FieldStates::Player2));
@@ -199,7 +213,7 @@ mod tests {
         grid.set(2, 1, FieldStates::Player1);
 
         let mut minimax = MiniMax::new(&grid);
-        let result = minimax.calculate();
+        let result = minimax.calculate(FieldStates::Player2);
 
         // The only move left should be (1, 2) or (2, 2)
         assert!(
@@ -215,7 +229,7 @@ mod tests {
 
         use std::time::Instant;
         let start = Instant::now();
-        minimax.calculate();
+        minimax.calculate(FieldStates::Player2);
         let duration = start.elapsed();
         assert!(duration.as_secs() < 1, "Minimax took too long to calculate");
     }

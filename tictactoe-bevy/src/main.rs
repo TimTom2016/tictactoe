@@ -1,7 +1,7 @@
 use bevy::{
     color::palettes::{
-        css::{BLACK, GRAY, WHITE},
-        tailwind::GRAY_50,
+        css::{BLACK, WHITE},
+        tailwind::{BLUE_400, BLUE_800, BLUE_900, GRAY_50},
     },
     prelude::*,
     sprite::MaterialMesh2dBundle,
@@ -66,12 +66,28 @@ pub struct GameData {
     pub moves: u32,
     pub won: bool,
 }
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Resource)]
 pub enum WinPossibilities {
     XWon,
     OWon,
     Tie,
     None,
+}
+
+impl std::fmt::Display for WinPossibilities {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            WinPossibilities::XWon => write!(f, "X Won!"),
+            WinPossibilities::OWon => write!(f, "O Won!"),
+            WinPossibilities::Tie => write!(f, "It's a Tie!"),
+            WinPossibilities::None => write!(f, "Game in Progress"),
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq, Component)]
+pub enum ButtonAction {
+    PlayAgain,
 }
 
 impl GameData {
@@ -113,7 +129,7 @@ impl GameData {
     pub fn make_ki_move(&mut self) -> Result<MoveResult, ()> {
         let mut minimax = MiniMax::new(&self.grid);
         let new_grid = self.grid.clone();
-        self.grid = minimax.calculate();
+        self.grid = minimax.calculate(self.player.opposite().to_field_states());
         self.moves += 1;
         let mut changed_index = 0;
         let mut same = true;
@@ -141,19 +157,22 @@ impl GameData {
             Ok(MoveResult::Moved(changed_index))
         }
     }
-    pub fn check_game_state(&self) -> WinPossibilities {
+    pub fn check_game_state(&mut self) -> WinPossibilities {
         // Check if X won
         if self.grid.check_win(PlayerChoice::X.to_field_states()) {
+            self.won = true;
             return WinPossibilities::XWon;
         }
 
         // Check if O won
         if self.grid.check_win(PlayerChoice::O.to_field_states()) {
+            self.won = true;
             return WinPossibilities::OWon;
         }
 
         // Check for tie (grid is full)
         if self.grid.is_full() {
+            self.won = true;
             return WinPossibilities::Tie;
         }
 
@@ -170,13 +189,29 @@ struct Symbol {
 #[derive(Component)]
 struct OnGameScreen;
 
+#[derive(Component)]
+struct OnPlayAgainScreen;
+
 fn main() {
     App::new()
         .add_plugins(DefaultPlugins)
         .add_plugins(MenuPlugin)
         .add_systems(Startup, setup)
         .add_systems(OnEnter(AppState::InGame), setup_game)
-        .add_systems(Update, handle_click.run_if(in_state(AppState::InGame)))
+        .add_systems(
+            Update,
+            handle_click
+                .run_if(in_state(AppState::InGame))
+                .run_if(not(resource_exists::<WinPossibilities>)),
+        )
+        .add_systems(
+            Update,
+            spawn_play_again.run_if(resource_added::<WinPossibilities>),
+        )
+        .add_systems(
+            Update,
+            (button_hover_system, menu_action).run_if(resource_exists::<WinPossibilities>),
+        )
         .add_event::<Click>()
         .add_event::<Pressed>()
         .add_event::<KIMove>()
@@ -184,6 +219,13 @@ fn main() {
             Update,
             (handle_ki_move).chain().run_if(in_state(AppState::InGame)),
         )
+        .add_systems(
+            Update,
+            detect_win_possibilities
+                .run_if(not(resource_exists::<WinPossibilities>))
+                .run_if(in_state(AppState::InGame)),
+        )
+        .add_systems(OnExit(AppState::InGame), (despawn_screen::<OnGameScreen>))
         .init_resource::<SpatialIndex>()
         .init_state::<AppState>()
         .observe(
@@ -217,7 +259,7 @@ fn setup_game(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<ColorMaterial>>,
-    mut game_data: ResMut<GameData>,
+    game_data: Res<GameData>,
 ) {
     let mut observer = Observer::new(tile_pressed);
     let cols = 3;
@@ -228,18 +270,21 @@ fn setup_game(
     );
     for y in 0..cols {
         for x in 0..rows {
-            commands.spawn((MaterialMesh2dBundle {
-                mesh: meshes.add(Rectangle::default()).into(),
-                transform: Transform::default()
-                    .with_scale(Vec3::splat(128.))
-                    .with_translation(Vec3::new(
-                        x as f32 * 128.0 - offset.x,
-                        y as f32 * 128.0 - offset.y,
-                        0.0,
-                    )),
-                material: materials.add(Color::from(WHITE)),
-                ..default()
-            },));
+            commands.spawn((
+                MaterialMesh2dBundle {
+                    mesh: meshes.add(Rectangle::default()).into(),
+                    transform: Transform::default()
+                        .with_scale(Vec3::splat(128.))
+                        .with_translation(Vec3::new(
+                            x as f32 * 128.0 - offset.x,
+                            y as f32 * 128.0 - offset.y,
+                            0.0,
+                        )),
+                    material: materials.add(Color::from(WHITE)),
+                    ..default()
+                },
+                OnGameScreen,
+            ));
             observer.watch_entity(
                 commands
                     .spawn((
@@ -260,6 +305,7 @@ fn setup_game(
                             size: 120.,
                             index: x + 6 - (y * 3),
                         },
+                        OnGameScreen,
                     ))
                     .id(),
             );
@@ -330,14 +376,14 @@ fn tile_pressed(
     mut materials: ResMut<Assets<ColorMaterial>>,
 ) {
     let id = trigger.entity();
-    let Some(entity) = commands.get_entity(id) else {
+    let Some(_) = commands.get_entity(id) else {
         return;
     };
 
     let tile = query.get(id).unwrap();
     if let Ok(result) = game_data.make_move(tile.index) {
         match result {
-            MoveResult::Moved(index) => {
+            MoveResult::Moved(_) => {
                 spawn_symbol(
                     &mut commands,
                     &mut meshes,
@@ -350,7 +396,7 @@ fn tile_pressed(
                     world.send_event(KIMove);
                 });
             }
-            MoveResult::Won(index) => {
+            MoveResult::Won(_) => {
                 spawn_symbol(
                     &mut commands,
                     &mut meshes,
@@ -485,6 +531,13 @@ fn spawn_x(
     ));
 }
 
+fn detect_win_possibilities(mut game_data: ResMut<GameData>, mut commands: Commands) {
+    let win = game_data.check_game_state();
+    if !matches!(win, WinPossibilities::None) {
+        commands.insert_resource(win);
+    }
+}
+
 fn spawn_o(
     commands: &mut Commands,
     meshes: &mut ResMut<Assets<Mesh>>,
@@ -504,4 +557,101 @@ fn spawn_o(
         Symbol { is_x: false },
         OnGameScreen,
     ));
+}
+
+fn spawn_play_again(mut commands: Commands, win: Res<WinPossibilities>) {
+    commands
+        .spawn((
+            NodeBundle {
+                style: Style {
+                    width: Val::Percent(100.0),
+                    height: Val::Percent(100.0),
+                    flex_direction: FlexDirection::Column,
+                    justify_content: JustifyContent::SpaceBetween,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            OnGameScreen,
+            OnPlayAgainScreen,
+        ))
+        .with_children(|parent| {
+            parent.spawn(
+                TextBundle::from_section(
+                    win.to_string(),
+                    TextStyle {
+                        ..Default::default()
+                    },
+                )
+                .with_style(Style {
+                    align_self: AlignSelf::Center,
+                    ..Default::default()
+                }),
+            );
+            parent
+                .spawn((
+                    ButtonBundle {
+                        background_color: BackgroundColor(BLUE_400.into()),
+                        border_radius: BorderRadius::all(Val::Percent(20.0)),
+                        border_color: BorderColor(BLACK.into()),
+                        style: Style {
+                            border: UiRect::all(Val::Px(1.0)),
+                            padding: UiRect::all(Val::Px(20.0))
+                                .with_top(Val::Px(5.0))
+                                .with_bottom(Val::Px(5.0)),
+                            margin: UiRect::all(Val::Px(20.0)),
+                            align_self: AlignSelf::Center,
+                            justify_self: JustifySelf::End,
+                            ..Default::default()
+                        },
+                        ..Default::default()
+                    },
+                    ButtonAction::PlayAgain,
+                ))
+                .with_children(|parent| {
+                    parent.spawn(TextBundle::from_section(
+                        "Play Again",
+                        TextStyle {
+                            ..Default::default()
+                        },
+                    ));
+                });
+        });
+}
+
+fn button_hover_system(
+    mut buttons: Query<(&Interaction, &mut BackgroundColor), (Changed<Interaction>, With<Button>)>,
+) {
+    for (interaction, mut color) in &mut buttons {
+        match *interaction {
+            Interaction::Pressed => {
+                *color = BackgroundColor(BLUE_900.into());
+            }
+            Interaction::Hovered => {
+                *color = BackgroundColor(BLUE_800.into());
+            }
+            Interaction::None => {
+                *color = BackgroundColor(BLUE_400.into());
+            }
+        }
+    }
+}
+
+fn menu_action(
+    interaction_query: Query<(&Interaction, &ButtonAction), (Changed<Interaction>, With<Button>)>,
+    mut app_state: ResMut<NextState<AppState>>,
+    mut commands: Commands,
+) {
+    for (interaction, menu_button_action) in &interaction_query {
+        if *interaction == Interaction::Pressed {
+            match menu_button_action {
+                ButtonAction::PlayAgain => {
+                    info!("Playing Again");
+                    commands.remove_resource::<GameData>();
+                    commands.remove_resource::<WinPossibilities>();
+                    app_state.set(AppState::InMenu);
+                }
+            }
+        }
+    }
 }

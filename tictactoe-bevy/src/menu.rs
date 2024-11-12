@@ -62,7 +62,7 @@ fn setup_menu(mut menu_state: ResMut<NextState<MenuState>>, mut commands: Comman
                         border: UiRect::all(Val::Px(1.0)),
                         padding: UiRect::all(Val::Px(5.0)),
                         min_width: Val::Vw(20.0),
-                        min_height: Val::Vh(40.0),
+                        min_height: Val::Vh(20.0),
                         flex_direction: FlexDirection::Column,
                         justify_content: JustifyContent::SpaceBetween,
                         align_items: AlignItems::Center,
