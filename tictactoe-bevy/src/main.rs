@@ -509,7 +509,7 @@ fn spawn_x(
             transform: Transform::from_xyz(position.x, position.y, 0.2)
                 .with_rotation(Quat::from_rotation_z(45f32.to_radians()))
                 .with_scale(Vec3::new(symbol_size, symbol_size / 8.0, 1.0)),
-            material: materials.add(Color::from(BLACK)),
+            material: materials.add(Color::from(GRAY_50)),
             ..default()
         },
         Symbol { is_x: true },
@@ -523,7 +523,7 @@ fn spawn_x(
             transform: Transform::from_xyz(position.x, position.y, 0.2)
                 .with_rotation(Quat::from_rotation_z(-45f32.to_radians()))
                 .with_scale(Vec3::new(symbol_size, symbol_size / 8.0, 1.0)),
-            material: materials.add(Color::from(BLACK)),
+            material: materials.add(Color::from(GRAY_50)),
             ..default()
         },
         Symbol { is_x: true },
