@@ -70,6 +70,61 @@ impl MiniMax {
 
         (best_move, best_score)
     }
+    pub fn calculate_without_pruning(&mut self) -> Grid {
+        let size = self.grid.size();
+        let (best_move, score) = self.minimax_simple((size.1 * size.0) as i8, true);
+        self.grid.set_elem(best_move as usize, FieldStates::Player2);
+        self.grid.clone()
+    }
+
+    fn minimax_simple(&self, depth: i8, maximize_win: bool) -> (i8, i8) {
+        if self.grid.check_win(FieldStates::Player2) {
+            return (-1, 10 + depth); // AI wins
+        }
+        if self.grid.check_win(FieldStates::Player1) {
+            return (-1, -10 - depth); // Human wins
+        }
+        if depth == 0 || self.grid.is_full() {
+            return (-1, 0); // Tie or max depth reached
+        }
+
+        let mut best_move = -1;
+        let mut best_score = if maximize_win {
+            std::i8::MIN
+        } else {
+            std::i8::MAX
+        };
+
+        for (i, cell) in self.grid.clone().into_iter().enumerate() {
+            if cell != FieldStates::Empty {
+                continue;
+            }
+            let mut next_move = self.clone();
+            next_move.grid.set_elem(
+                i,
+                if maximize_win {
+                    FieldStates::Player2
+                } else {
+                    FieldStates::Player1
+                },
+            );
+            let (_, score) = next_move.minimax_simple(depth - 1, !maximize_win);
+
+            if maximize_win {
+                if score > best_score {
+                    best_score = score;
+                    best_move = i as i8;
+                }
+            } else {
+                if score < best_score {
+                    best_score = score;
+                    best_move = i as i8;
+                }
+            }
+        }
+
+        (best_move, best_score)
+    }
 }
 
 #[cfg(test)]

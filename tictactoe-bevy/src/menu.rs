@@ -186,6 +186,7 @@ fn menu_action(
                         player: PlayerChoice::X,
                         grid: Grid::new(3, 3),
                         moves: 0,
+                        won: false,
                     });
                     menu_state.set(MenuState::InTransition);
                     app_state.set(AppState::InGame);
@@ -196,6 +197,7 @@ fn menu_action(
                         player: PlayerChoice::O,
                         grid: Grid::new(3, 3),
                         moves: 0,
+                        won: false,
                     });
                     menu_state.set(MenuState::InTransition);
                     app_state.set(AppState::InGame);

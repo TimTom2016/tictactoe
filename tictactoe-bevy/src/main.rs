@@ -64,6 +64,14 @@ pub struct GameData {
     pub player: PlayerChoice,
     pub grid: Grid,
     pub moves: u32,
+    pub won: bool,
+}
+#[derive(Debug, PartialEq, Eq)]
+pub enum WinPossibilities {
+    XWon,
+    OWon,
+    Tie,
+    None,
 }
 
 impl GameData {
@@ -84,6 +92,7 @@ impl GameData {
 
             // Check if the current move resulted in a win
             if self.grid.check_win(current_state) {
+                self.won = true;
                 Ok(MoveResult::Won(grid_index))
             } else {
                 Ok(MoveResult::Moved(grid_index))
@@ -107,6 +116,7 @@ impl GameData {
         self.grid = minimax.calculate();
         self.moves += 1;
         let mut changed_index = 0;
+        let mut same = true;
         for (index, (old, new)) in self
             .grid
             .clone()
@@ -117,14 +127,38 @@ impl GameData {
             if old != new {
                 // Found the move, now make it through the regular move system
                 changed_index = index as u32;
+                same = false;
             }
+        }
+        if same {
+            return Err(());
         }
         // Check if KI won
         if self.grid.check_win(FieldStates::Player2) {
+            self.won = true;
             Ok(MoveResult::Won(changed_index))
         } else {
             Ok(MoveResult::Moved(changed_index))
         }
+    }
+    pub fn check_game_state(&self) -> WinPossibilities {
+        // Check if X won
+        if self.grid.check_win(PlayerChoice::X.to_field_states()) {
+            return WinPossibilities::XWon;
+        }
+
+        // Check if O won
+        if self.grid.check_win(PlayerChoice::O.to_field_states()) {
+            return WinPossibilities::OWon;
+        }
+
+        // Check for tie (grid is full)
+        if self.grid.is_full() {
+            return WinPossibilities::Tie;
+        }
+
+        // Game is still ongoing
+        WinPossibilities::None
     }
 }
 
@@ -183,6 +217,7 @@ fn setup_game(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<ColorMaterial>>,
+    mut game_data: ResMut<GameData>,
 ) {
     let mut observer = Observer::new(tile_pressed);
     let cols = 3;
@@ -221,7 +256,7 @@ fn setup_game(
                             ..default()
                         },
                         Tile {
-                            pos: Vec2::new(x as f32 * 128., y as f32 * 128.),
+                            pos: Vec2::new(x as f32 * 128. - offset.x, y as f32 * 128. - offset.y),
                             size: 120.,
                             index: x + 6 - (y * 3),
                         },
@@ -231,6 +266,11 @@ fn setup_game(
         }
     }
     commands.spawn(observer);
+    if matches!(game_data.player, PlayerChoice::O) {
+        commands.add(move |world: &mut World| {
+            world.send_event(KIMove);
+        });
+    }
 }
 
 fn handle_click(
@@ -293,7 +333,6 @@ fn tile_pressed(
     let Some(entity) = commands.get_entity(id) else {
         return;
     };
-    info!("");
 
     let tile = query.get(id).unwrap();
     if let Ok(result) = game_data.make_move(tile.index) {
@@ -306,7 +345,6 @@ fn tile_pressed(
                     tile.pos,
                     game_data.player.clone(),
                 );
-                info!("moved");
                 // Trigger KI move if it's not game over
                 commands.add(move |world: &mut World| {
                     world.send_event(KIMove);
@@ -321,7 +359,6 @@ fn tile_pressed(
                     game_data.player.clone(),
                 );
                 // Handle win condition
-                info!("Player won!");
             }
         }
     }
@@ -333,7 +370,7 @@ struct SpatialIndex {
 }
 
 /// Cell size has to be bigger than any `TriggerMine::radius`
-const CELL_SIZE: f32 = 64.0;
+const CELL_SIZE: f32 = 48.0;
 
 impl SpatialIndex {
     // Lookup all entities within adjacent cells of our spatial index
@@ -392,7 +429,6 @@ fn handle_ki_move(
                             game_data.player.opposite(),
                         );
                     }
-                    info!("KI won!");
                 }
             }
         }
